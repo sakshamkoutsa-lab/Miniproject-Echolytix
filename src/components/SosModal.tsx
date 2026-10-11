@@ -15,9 +15,10 @@ import {
 interface SosModalProps {
   isOpen: boolean;
   onClose: () => void;
+  triggerSource?: 'manual' | 'blink' | 'morse' | 'remote' | 'sign';
 }
 
-export const SosModal: React.FC<SosModalProps> = ({ isOpen, onClose }) => {
+export const SosModal: React.FC<SosModalProps> = ({ isOpen, onClose, triggerSource = 'manual' }) => {
   const [sirenActive, setSirenActive] = useState<boolean>(true);
   const [patientId, setPatientId] = useState<number | null>(null);
   const [patientName, setPatientName] = useState<string>('Sachin Gupta');
@@ -413,12 +414,34 @@ export const SosModal: React.FC<SosModalProps> = ({ isOpen, onClose }) => {
           <span className="material-symbols-outlined text-3xl text-rose-600 animate-ping">
             warning
           </span>
-          <div>
-            <h3 className="font-display font-extrabold text-lg text-rose-600 uppercase tracking-wider">
-              Emergency SOS Signal
-            </h3>
-            <span className="font-mono-code text-xs text-rose-500 font-bold">
-              DISTRESS BEACON DISPATCHED TO CARETAKER
+          <div className="flex-1">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="font-display font-extrabold text-lg text-rose-600 uppercase tracking-wider">
+                Emergency SOS Signal
+              </h3>
+              {triggerSource === 'blink' && (
+                <span className="bg-rose-600 text-white text-[10px] font-mono-code font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm animate-pulse">
+                  <span className="material-symbols-outlined text-[12px]">visibility</span>
+                  AUTO BLINK SOS (... --- ...)
+                </span>
+              )}
+              {triggerSource === 'morse' && (
+                <span className="bg-indigo-600 text-white text-[10px] font-mono-code font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm animate-pulse">
+                  <span className="material-symbols-outlined text-[12px]">keyboard</span>
+                  MORSE SOS (... --- ...)
+                </span>
+              )}
+              {triggerSource === 'remote' && (
+                <span className="bg-amber-600 text-white text-[10px] font-mono-code font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm animate-pulse">
+                  <span className="material-symbols-outlined text-[12px]">smartphone</span>
+                  REMOTE SENSOR SOS
+                </span>
+              )}
+            </div>
+            <span className="font-mono-code text-xs text-rose-500 font-bold block mt-0.5">
+              {triggerSource === 'blink'
+                ? 'AUTOMATICALLY DISPATCHED VIA EYE-BLINK MORSE CODE DETECTION'
+                : 'DISTRESS BEACON DISPATCHED TO CARETAKER'}
             </span>
           </div>
         </div>
