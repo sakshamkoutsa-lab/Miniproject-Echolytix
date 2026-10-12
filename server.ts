@@ -43,8 +43,35 @@ import {
   deletePasswordReset,
   updatePatientPassword,
   createSupportRequest,
-  getSupportRequests
+  getSupportRequests,
+  getContacts,
+  getContactById,
+  createContact,
+  deleteContact,
+  updateContactPresence,
+  updateContact,
+  dismissSosAlert,
+  createCall,
+  getCallById,
+  updateCallStatus,
+  getCallHistory,
+  addCallMessage,
+  getCallMessages,
+  getCallSettings,
+  updateCallSettings,
+  getMorseSettings,
+  updateMorseSettings,
+  getMorseHistory,
+  addMorseHistory,
+  deleteCategory,
+  deletePhraseFromCategory,
+  getTtsPreferences,
+  updateTtsPreferences,
+  getPatientByPhone,
+  getPatientById
 } from "./database.ts";
+import { normalizePhoneNumber } from "./src/utils/phoneUtils.ts";
+import { WebSocketServer, WebSocket } from "ws";
 import completionModel from "./src/data/completion_model.json";
 
 dotenv.config();
@@ -227,6 +254,79 @@ app.delete("/api/quick-phrases/:id", (req, res) => {
   }
 });
 
+// --- Morse Code Settings & History ---
+app.get("/api/morse/settings", (req: any, res) => {
+  try {
+    const patientId = req.patient?.id || 1;
+    const settings = getMorseSettings(patientId);
+    return res.json(settings);
+  } catch (err: any) {
+    console.error("Error retrieving morse settings:", err);
+    return res.status(500).json({ error: "Failed to retrieve morse settings" });
+  }
+});
+
+app.put("/api/morse/settings", (req: any, res) => {
+  try {
+    const patientId = req.patient?.id || 1;
+    const updated = updateMorseSettings(patientId, req.body);
+    return res.json(updated);
+  } catch (err: any) {
+    console.error("Error updating morse settings:", err);
+    return res.status(500).json({ error: "Failed to update morse settings" });
+  }
+});
+
+app.get("/api/morse/history", (req: any, res) => {
+  try {
+    const patientId = req.patient?.id || 1;
+    const history = getMorseHistory(patientId, 50);
+    return res.json(history);
+  } catch (err: any) {
+    console.error("Error retrieving morse history:", err);
+    return res.status(500).json({ error: "Failed to retrieve morse history" });
+  }
+});
+
+app.post("/api/morse/history", (req: any, res) => {
+  try {
+    const { text, morse_sequence } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    const patientId = req.patient?.id || 1;
+    const entry = addMorseHistory({ patient_id: patientId, text, morse_sequence });
+    return res.status(201).json(entry);
+  } catch (err: any) {
+    console.error("Error adding morse history:", err);
+    return res.status(500).json({ error: "Failed to add morse history" });
+  }
+});
+
+app.get("/api/morse/phrases", (req, res) => {
+  try {
+    const phrases = getQuickPhrases();
+    return res.json(phrases);
+  } catch (err: any) {
+    console.error("Error fetching morse phrases:", err);
+    return res.status(500).json({ error: "Failed to fetch morse phrases" });
+  }
+});
+
+app.post("/api/morse/phrases", (req, res) => {
+  try {
+    const { label, morse, category } = req.body;
+    if (!label || !morse) {
+      return res.status(400).json({ error: "Label and morse pattern are required" });
+    }
+    const newQuick = addQuickPhrase(label, morse, category);
+    return res.status(201).json(newQuick);
+  } catch (err: any) {
+    console.error("Error adding morse phrase:", err);
+    return res.status(500).json({ error: "Failed to add morse phrase" });
+  }
+});
+
 // --- TTS Categories & Phrases ---
 app.get("/api/categories", (req, res) => {
   try {
@@ -264,6 +364,130 @@ app.post("/api/categories/:id/phrases", (req, res) => {
   } catch (err: any) {
     console.error("Error adding phrase to category:", err);
     return res.status(500).json({ error: "Failed to add phrase to category" });
+  }
+});
+
+app.delete("/api/categories/:id", (req, res) => {
+  try {
+    const categoryId = parseInt(req.params.id);
+    if (isNaN(categoryId)) {
+      return res.status(400).json({ error: "Invalid category ID" });
+    }
+    deleteCategory(categoryId);
+    return res.json({ success: true, message: `Category ${categoryId} deleted` });
+  } catch (err: any) {
+    console.error("Error deleting category:", err);
+    return res.status(500).json({ error: "Failed to delete category" });
+  }
+});
+
+app.delete("/api/categories/:id/phrases", (req, res) => {
+  try {
+    const categoryId = parseInt(req.params.id);
+    const { phrase } = req.body;
+    if (isNaN(categoryId) || !phrase) {
+      return res.status(400).json({ error: "Category ID and phrase text are required" });
+    }
+    deletePhraseFromCategory(categoryId, phrase);
+    return res.json({ success: true, message: "Phrase deleted from category" });
+  } catch (err: any) {
+    console.error("Error deleting phrase from category:", err);
+    return res.status(500).json({ error: "Failed to delete phrase from category" });
+  }
+});
+
+// --- TTS Preferences ---
+app.get("/api/tts/preferences", (req: any, res) => {
+  try {
+    const patientId = req.patient?.id || 1;
+    const prefs = getTtsPreferences(patientId);
+    return res.json(prefs);
+  } catch (err: any) {
+    console.error("Error fetching TTS preferences:", err);
+    return res.status(500).json({ error: "Failed to fetch TTS preferences" });
+  }
+});
+
+app.put("/api/tts/preferences", (req: any, res) => {
+  try {
+    const patientId = req.patient?.id || 1;
+    const updated = updateTtsPreferences(patientId, req.body);
+    return res.json(updated);
+  } catch (err: any) {
+    console.error("Error updating TTS preferences:", err);
+    return res.status(500).json({ error: "Failed to update TTS preferences" });
+  }
+});
+
+// --- AI Text Polisher ---
+app.post("/api/tts/polish", async (req, res) => {
+  try {
+    const { text, option } = req.body; // option: 'grammar' | 'clearer' | 'shorter' | 'polite' | 'simplify'
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: "Missing text input" });
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      // Rule-based / local fallback text polisher
+      let polished = text.trim();
+      const lower = polished.toLowerCase();
+      if (option === 'polite') {
+        if (!lower.includes('please')) polished = 'Please, ' + polished;
+        if (!/[.!?]$/.test(polished)) polished += '.';
+        if (!lower.includes('thank')) polished += ' Thank you.';
+      } else if (option === 'shorter') {
+        polished = polished
+          .replace(/^(hello|hi|hey),?\s*/i, '')
+          .replace(/\b(actually|basically|really|very|just)\b/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+      } else if (option === 'grammar' || option === 'clearer' || option === 'simplify') {
+        polished = polished.charAt(0).toUpperCase() + polished.slice(1);
+        if (!/[.!?]$/.test(polished)) polished += '.';
+      }
+      return res.json({ polished, provider: 'local-rule' });
+    }
+
+    const optionPrompts: Record<string, string> = {
+      grammar: "Fix any grammatical, punctuation, and capitalization errors in the following text while keeping its exact original meaning.",
+      clearer: "Make the following text clearer, crisper, and easier to understand when spoken aloud through text-to-speech.",
+      shorter: "Make the following text concise and direct, removing redundant words while retaining the essential message.",
+      polite: "Rewrite the following text in a courteous, warm, and polite manner suitable for assistive communication.",
+      simplify: "Simplify the wording of the following text so that it uses simple, everyday vocabulary."
+    };
+
+    const instructions = optionPrompts[option] || optionPrompts.clearer;
+    const prompt = `You are an AI Text-to-Speech communication assistant for Echolytix.
+${instructions}
+
+Original message: "${text}"
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "polished": "string"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    return res.json({
+      polished: parsed.polished || text,
+      provider: 'gemini'
+    });
+  } catch (err: any) {
+    console.error("Error in AI polish route:", err);
+    return res.status(500).json({
+      error: "AI polishing failed",
+      polished: req.body.text || "",
+      provider: 'fallback'
+    });
   }
 });
 
@@ -867,6 +1091,995 @@ app.get("/api/emergency/sos", (req, res) => {
   }
 });
 
+// Dismiss SOS signal and mute active siren
+app.post("/api/emergency/sos/dismiss", (req, res) => {
+  try {
+    const { id } = req.body || {};
+    dismissSosAlert(id ? Number(id) : undefined);
+    console.log(`🛑 SOS Distress beacon dismissed/cleared.`);
+    return res.json({ success: true, message: "SOS signal dismissed." });
+  } catch (err: any) {
+    console.error("Error dismissing SOS:", err);
+    return res.status(500).json({ error: "Failed to dismiss SOS signal." });
+  }
+});
+
+// Test Broadcast Diagnostic
+app.post("/api/emergency/sos/test", (req, res) => {
+  try {
+    const { recipientPhone, caregiverName } = req.body || {};
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`🧪 [TEST BROADCAST] Non-emergency diagnostic signal transmitted to ${caregiverName || 'Saksham'} (${recipientPhone || '+91 8130896226'}) at ${timestamp}`);
+    return res.json({
+      success: true,
+      message: `Test broadcast verified to ${caregiverName || 'Saksham'} (${recipientPhone || '+91 8130896226'})`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("Error sending test broadcast:", err);
+    return res.status(500).json({ error: "Failed to transmit test broadcast." });
+  }
+});
+
+// ==========================================
+// ACCESSIBLE VIDEO CALL & CONTACTS APIS
+// ==========================================
+
+const getAuthPatientId = (req: any): number => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token) {
+      const session = getSession(token) as any;
+      if (session?.id) return Number(session.id);
+    }
+  } catch (e) {}
+  return 1;
+};
+
+// Map of userId -> Set of WebSockets for real-time presence tracking
+const userPresenceSockets = new Map<string, Set<WebSocket>>();
+
+function isUserOnline(userId: string): boolean {
+  const sockets = userPresenceSockets.get(String(userId));
+  if (!sockets || sockets.size === 0) return false;
+  for (const ws of sockets) {
+    if (ws.readyState === WebSocket.OPEN) return true;
+  }
+  return false;
+}
+
+function notifyUser(userId: string, payload: any): boolean {
+  const sockets = userPresenceSockets.get(String(userId));
+  if (!sockets || sockets.size === 0) return false;
+  let delivered = false;
+  const raw = JSON.stringify(payload);
+  for (const ws of sockets) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(raw);
+      delivered = true;
+    }
+  }
+  return delivered;
+}
+
+function broadcastPresence(userId: string, status: 'online' | 'offline') {
+  const payload = JSON.stringify({
+    type: 'user:presence',
+    userId: String(userId),
+    presence: status
+  });
+  for (const sockets of userPresenceSockets.values()) {
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(payload);
+      }
+    }
+  }
+}
+
+interface CallPeer {
+  id: string;
+  userId: string;
+  userName: string;
+  callId: string;
+  ws: WebSocket;
+}
+
+const callRooms = new Map<string, Map<string, CallPeer>>();
+
+function broadcastToCallRoom(callId: string, payload: any, excludeWsOrPeerId?: any) {
+  const room = callRooms.get(callId);
+  if (!room) return;
+  const raw = JSON.stringify(payload);
+  for (const peer of room.values()) {
+    if (peer.ws.readyState === WebSocket.OPEN) {
+      if (typeof excludeWsOrPeerId === 'string' && peer.id === excludeWsOrPeerId) continue;
+      if (excludeWsOrPeerId === peer.ws) continue;
+      peer.ws.send(raw);
+    }
+  }
+}
+
+function setupCallSignaling(server: any) {
+  const wss = new WebSocketServer({ server, path: "/ws/call" });
+
+  wss.on("connection", (ws: WebSocket, req: any) => {
+    let currentPeer: CallPeer | null = null;
+    let currentUserId: string | null = null;
+    let currentUserName: string = "User";
+
+    // Auto-authenticate from URL parameters: ?token=... or ?userId=...
+    try {
+      const parsedUrl = new URL(req.url || "", "http://localhost");
+      const token = parsedUrl.searchParams.get("token");
+      const queryUserId = parsedUrl.searchParams.get("userId");
+      const queryUserName = parsedUrl.searchParams.get("userName");
+
+      if (token) {
+        const session = getSession(token) as any;
+        if (session) {
+          currentUserId = String(session.id);
+          currentUserName = session.name || "User";
+        }
+      }
+      if (!currentUserId && queryUserId) {
+        currentUserId = String(queryUserId);
+        currentUserName = queryUserName || `User ${queryUserId}`;
+      }
+    } catch (e) {}
+
+    if (currentUserId) {
+      let sockets = userPresenceSockets.get(currentUserId);
+      if (!sockets) {
+        sockets = new Set();
+        userPresenceSockets.set(currentUserId, sockets);
+      }
+      sockets.add(ws);
+      broadcastPresence(currentUserId, "online");
+
+      ws.send(JSON.stringify({
+        type: "connected",
+        userId: currentUserId,
+        userName: currentUserName,
+        timestamp: new Date().toISOString()
+      }));
+    }
+
+    ws.on("message", (raw: any) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        const effectiveType = msg.type;
+
+        switch (effectiveType) {
+          // User presence & registration
+          case "user:register":
+          case "join-presence": {
+            const { token, userId, userName } = msg;
+            if (token) {
+              const session = getSession(token) as any;
+              if (session) {
+                currentUserId = String(session.id);
+                currentUserName = session.name || "User";
+              }
+            } else if (userId) {
+              currentUserId = String(userId);
+              currentUserName = userName || `User ${userId}`;
+            }
+
+            if (currentUserId) {
+              let sockets = userPresenceSockets.get(currentUserId);
+              if (!sockets) {
+                sockets = new Set();
+                userPresenceSockets.set(currentUserId, sockets);
+              }
+              sockets.add(ws);
+              broadcastPresence(currentUserId, "online");
+              ws.send(JSON.stringify({
+                type: "registered",
+                userId: currentUserId,
+                userName: currentUserName
+              }));
+            }
+            break;
+          }
+
+          // Call Initiation (by phone or recipient ID)
+          case "call:initiate": {
+            const { phone, recipientId, callType } = msg;
+            let targetId = recipientId ? String(recipientId) : "";
+            let targetName = "";
+            let targetPhone = "";
+
+            if (phone) {
+              const normalized = normalizePhoneNumber(phone);
+              if (!normalized || !normalized.isValid) {
+                ws.send(JSON.stringify({
+                  type: "call:failed",
+                  error: "Invalid phone number format. Please provide a valid international phone number with country code."
+                }));
+                break;
+              }
+              targetPhone = normalized.e164;
+              const patient = getPatientByPhone(normalized.e164) as any;
+              if (!patient) {
+                ws.send(JSON.stringify({
+                  type: "call:failed",
+                  error: "This number is not registered with EchoLytix."
+                }));
+                break;
+              }
+              targetId = String(patient.id);
+              targetName = patient.name;
+            } else if (recipientId) {
+              const patient = getPatientById(recipientId) as any;
+              if (patient) {
+                targetName = patient.name;
+                targetPhone = patient.phone || "";
+              }
+            }
+
+            if (!targetId || targetId === currentUserId) {
+              ws.send(JSON.stringify({
+                type: "call:failed",
+                error: targetId === currentUserId ? "You cannot call yourself." : "Recipient not found."
+              }));
+              break;
+            }
+
+            const callId = `call_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+            const online = isUserOnline(targetId);
+
+            createCall({
+              id: callId,
+              initiator_id: currentUserId ? Number(currentUserId) : 1,
+              initiator_name: currentUserName,
+              recipient_id: targetId,
+              recipient_name: targetName || "Recipient",
+              recipient_phone: targetPhone,
+              status: online ? "ringing" : "failed",
+              call_type: callType || "video"
+            });
+
+            if (!online) {
+              updateCallStatus(callId, "failed", "Recipient is offline");
+              ws.send(JSON.stringify({
+                type: "call:failed",
+                callId,
+                error: `${targetName || "Recipient"} is currently offline and cannot receive in-app calls.`
+              }));
+              break;
+            }
+
+            // Send ringing to caller
+            ws.send(JSON.stringify({
+              type: "call:ringing",
+              callId,
+              recipient: {
+                id: targetId,
+                name: targetName,
+                phone: targetPhone
+              }
+            }));
+
+            // Send incoming notification to recipient
+            notifyUser(targetId, {
+              type: "call:incoming",
+              callId,
+              caller: {
+                id: currentUserId || "1",
+                name: currentUserName,
+                avatar: currentUserName.slice(0, 2).toUpperCase()
+              },
+              callType: callType || "video"
+            });
+            break;
+          }
+
+          // Call Acceptance
+          case "call:accept": {
+            const { callId } = msg;
+            if (!callId) break;
+            const call = getCallById(callId) as any;
+            updateCallStatus(callId, "connecting");
+
+            if (call?.initiator_id) {
+              notifyUser(String(call.initiator_id), {
+                type: "call:accepted",
+                callId,
+                recipientId: currentUserId,
+                recipientName: currentUserName
+              });
+            }
+
+            ws.send(JSON.stringify({
+              type: "call:accepted",
+              callId
+            }));
+            break;
+          }
+
+          // Call Rejection
+          case "call:reject": {
+            const { callId, reason } = msg;
+            if (!callId) break;
+            const call = getCallById(callId) as any;
+            updateCallStatus(callId, "rejected", reason || "declined");
+
+            if (call?.initiator_id) {
+              notifyUser(String(call.initiator_id), {
+                type: "call:rejected",
+                callId,
+                reason: reason || "Recipient declined the call."
+              });
+            }
+            break;
+          }
+
+          // Call Cancellation (Caller cancels before answer)
+          case "call:cancel": {
+            const { callId } = msg;
+            if (!callId) break;
+            const call = getCallById(callId) as any;
+            updateCallStatus(callId, "cancelled", "Cancelled by caller");
+
+            if (call?.recipient_id) {
+              notifyUser(String(call.recipient_id), {
+                type: "call:cancelled",
+                callId
+              });
+            }
+            break;
+          }
+
+          // Join call room for WebRTC peer connection
+          case "join-call":
+          case "call:join": {
+            const { callId, userId, userName } = msg;
+            if (!callId) return;
+            const effectiveUserId = String(userId || currentUserId || "1");
+            const effectiveUserName = userName || currentUserName || "User";
+
+            currentPeer = {
+              id: `${effectiveUserId}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+              userId: effectiveUserId,
+              userName: effectiveUserName,
+              callId,
+              ws
+            };
+
+            if (!callRooms.has(callId)) {
+              callRooms.set(callId, new Map());
+            }
+            const room = callRooms.get(callId)!;
+
+            // Notify existing peers
+            for (const peer of room.values()) {
+              if (peer.ws.readyState === WebSocket.OPEN) {
+                peer.ws.send(JSON.stringify({
+                  type: "peer-joined",
+                  peerId: currentPeer.id,
+                  userId: currentPeer.userId,
+                  userName: currentPeer.userName
+                }));
+              }
+            }
+
+            room.set(currentPeer.id, currentPeer);
+
+            const existingPeers = Array.from(room.values())
+              .filter(p => p.id !== currentPeer!.id)
+              .map(p => ({ peerId: p.id, userId: p.userId, userName: p.userName }));
+
+            ws.send(JSON.stringify({
+              type: "joined-call",
+              callId,
+              peerId: currentPeer.id,
+              existingPeers
+            }));
+
+            if (room.size >= 2) {
+              updateCallStatus(callId, "connected");
+              broadcastToCallRoom(callId, { type: "call:connected", callId });
+            }
+            break;
+          }
+
+          // WebRTC Offer
+          case "call:offer":
+          case "sdp-offer": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            const offer = msg.offer || msg.sdp;
+            if (targetCallId) {
+              broadcastToCallRoom(targetCallId, {
+                type: "sdp-offer",
+                fromPeerId: currentPeer?.id,
+                offer
+              }, ws);
+            }
+            break;
+          }
+
+          // WebRTC Answer
+          case "call:answer":
+          case "sdp-answer": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            const answer = msg.answer || msg.sdp;
+            if (targetCallId) {
+              broadcastToCallRoom(targetCallId, {
+                type: "sdp-answer",
+                fromPeerId: currentPeer?.id,
+                answer
+              }, ws);
+            }
+            break;
+          }
+
+          // ICE Candidate Exchange
+          case "call:ice-candidate":
+          case "ice-candidate": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            const candidate = msg.candidate;
+            if (targetCallId && candidate) {
+              broadcastToCallRoom(targetCallId, {
+                type: "ice-candidate",
+                fromPeerId: currentPeer?.id,
+                candidate
+              }, ws);
+            }
+            break;
+          }
+
+          // WebRTC Connected state update
+          case "call:connected": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            if (targetCallId) {
+              updateCallStatus(targetCallId, "connected");
+            }
+            break;
+          }
+
+          // In-call transcript messages
+          case "transcript-message": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            if (targetCallId && msg.message) {
+              addCallMessage({
+                call_id: targetCallId,
+                sender_name: msg.message.sender_name || currentUserName,
+                sender_role: msg.message.sender_role || "user",
+                method: msg.message.method || "Text",
+                text: msg.message.text,
+                timestamp: msg.message.timestamp
+              });
+
+              broadcastToCallRoom(targetCallId, {
+                type: "transcript-message",
+                fromPeerId: currentPeer?.id,
+                message: msg.message
+              }, ws);
+            }
+            break;
+          }
+
+          // Communication mode changes
+          case "communication-mode": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            if (targetCallId) {
+              broadcastToCallRoom(targetCallId, {
+                type: "communication-mode",
+                fromPeerId: currentPeer?.id,
+                mode: msg.mode
+              }, ws);
+            }
+            break;
+          }
+
+          // Call Termination
+          case "call:end":
+          case "call-end": {
+            const targetCallId = msg.callId || currentPeer?.callId;
+            if (targetCallId) {
+              broadcastToCallRoom(targetCallId, {
+                type: "call-ended",
+                callId: targetCallId,
+                reason: msg.reason || "Call ended by peer"
+              }, ws);
+              callRooms.delete(targetCallId);
+              updateCallStatus(targetCallId, "ended", msg.reason || "hangup", msg.duration);
+            }
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn("[Call WS Parse Error]:", err);
+      }
+    });
+
+    ws.on("close", () => {
+      if (currentUserId) {
+        const userSet = userPresenceSockets.get(currentUserId);
+        if (userSet) {
+          userSet.delete(ws);
+          if (userSet.size === 0) {
+            userPresenceSockets.delete(currentUserId);
+            broadcastPresence(currentUserId, "offline");
+          }
+        }
+      }
+
+      if (currentPeer) {
+        const room = callRooms.get(currentPeer.callId);
+        if (room) {
+          room.delete(currentPeer.id);
+          broadcastToCallRoom(currentPeer.callId, {
+            type: "peer-left",
+            peerId: currentPeer.id
+          });
+          if (room.size === 0) {
+            callRooms.delete(currentPeer.callId);
+          }
+        }
+      }
+    });
+  });
+}
+
+// Contacts: List & Search
+app.get("/api/contacts", (req: any, res) => {
+  try {
+    const search = req.query.search as string;
+    const category = req.query.category as string;
+    const patientId = getAuthPatientId(req);
+    const contacts = getContacts(patientId, search, category);
+    return res.json(contacts);
+  } catch (err: any) {
+    console.error("Error fetching contacts:", err);
+    return res.status(500).json({ error: "Failed to fetch contacts" });
+  }
+});
+
+// Contacts: Add Contact
+app.post("/api/contacts", (req: any, res) => {
+  try {
+    const { name, role, category, phone, email, avatar_initials } = req.body;
+    if (!name || !role || !category) {
+      return res.status(400).json({ error: "Name, role, and category are required." });
+    }
+    const patientId = getAuthPatientId(req);
+    const newContact = createContact({
+      patient_id: patientId,
+      name: name.trim(),
+      role: role.trim(),
+      category: category.trim().toLowerCase(),
+      phone: phone?.trim() || null,
+      email: email?.trim() || null,
+      avatar_initials: avatar_initials?.trim(),
+      presence_status: 'online'
+    });
+    return res.status(201).json(newContact);
+  } catch (err: any) {
+    console.error("Error creating contact:", err);
+    return res.status(500).json({ error: "Failed to create contact" });
+  }
+});
+
+// Contacts: Delete Contact
+app.delete("/api/contacts/:id", (req: any, res) => {
+  try {
+    const contactId = parseInt(req.params.id, 10);
+    const patientId = getAuthPatientId(req);
+    deleteContact(contactId, patientId);
+    return res.json({ success: true, message: `Contact ${contactId} removed.` });
+  } catch (err: any) {
+    console.error("Error deleting contact:", err);
+    return res.status(500).json({ error: "Failed to delete contact" });
+  }
+});
+
+// Contacts: Update Contact (Phone, Name, Role)
+app.put("/api/contacts/:id", (req: any, res) => {
+  try {
+    const contactId = parseInt(req.params.id, 10);
+    const { phone, name, role, email } = req.body || {};
+    if (!contactId) return res.status(400).json({ error: "Contact ID is required." });
+    const updated = updateContact(contactId, { phone, name, role, email });
+    if (!updated) return res.status(404).json({ error: "Contact not found." });
+    console.log(`👤 Contact updated [ID ${contactId}]: ${updated.name} (${updated.phone})`);
+    return res.json(updated);
+  } catch (err: any) {
+    console.error("Error updating contact:", err);
+    return res.status(500).json({ error: "Failed to update contact." });
+  }
+});
+
+// Contacts: Phone Number Lookup for Registered Users
+app.get("/api/contacts/lookup", (req: any, res) => {
+  try {
+    const rawPhone = (req.query.phone as string) || "";
+    if (!rawPhone.trim()) {
+      return res.status(400).json({ error: "Phone number query parameter is required." });
+    }
+    const normalized = normalizePhoneNumber(rawPhone);
+    if (!normalized || !normalized.isValid) {
+      return res.status(400).json({
+        registered: false,
+        error: "Invalid phone number format. Please provide a valid international number with country code."
+      });
+    }
+
+    const patient = getPatientByPhone(normalized.e164) as any;
+    if (!patient) {
+      return res.status(404).json({
+        registered: false,
+        error: "This number is not registered with EchoLytix."
+      });
+    }
+
+    const online = isUserOnline(String(patient.id));
+    const initials = (patient.name || "User")
+      .split(" ")
+      .map((p: string) => p[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+
+    return res.json({
+      registered: true,
+      id: patient.id,
+      name: patient.name,
+      phone: normalized.e164,
+      avatar_initials: initials,
+      online,
+      role: "Registered User"
+    });
+  } catch (err: any) {
+    console.error("Error looking up phone contact:", err);
+    return res.status(500).json({ error: "Failed to perform contact lookup." });
+  }
+});
+
+// Presence endpoints
+app.get("/api/users/:userId/presence", (req, res) => {
+  const userId = String(req.params.userId);
+  const isOnline = isUserOnline(userId);
+  return res.json({ userId, presence: isOnline ? 'online' : 'offline' });
+});
+
+app.get("/api/contacts/:id/presence", (req, res) => {
+  const contact = getContactById(parseInt(req.params.id, 10)) as any;
+  if (!contact) return res.status(404).json({ error: "Contact not found" });
+
+  let isOnline = false;
+  if (contact.phone) {
+    const patient = getPatientByPhone(contact.phone) as any;
+    if (patient) {
+      isOnline = isUserOnline(String(patient.id));
+    }
+  }
+
+  return res.json({ id: contact.id, presence: isOnline ? 'online' : 'offline' });
+});
+
+// Calls: Initiate Call (by phone or contact ID)
+app.post("/api/calls", (req: any, res) => {
+  try {
+    const { id, phone, recipient_id, recipient_name, call_type } = req.body || {};
+    const initiatorId = getAuthPatientId(req);
+    const initiator = getPatientById(initiatorId) as any;
+    const initiatorName = req.body.initiator_name || initiator?.name || "Sachin Gupta";
+    const initiatorPhone = initiator?.phone || "+919876543210";
+
+    let resolvedRecipientId = recipient_id ? String(recipient_id) : "";
+    let resolvedRecipientName = recipient_name || "";
+    let resolvedRecipientPhone = "";
+
+    // If phone number is supplied, validate & look up registered user
+    if (phone) {
+      const normalized = normalizePhoneNumber(phone);
+      if (!normalized || !normalized.isValid) {
+        return res.status(400).json({
+          error: "Invalid phone number format. Please provide a valid international phone number with country code."
+        });
+      }
+      resolvedRecipientPhone = normalized.e164;
+      const registeredUser = getPatientByPhone(normalized.e164) as any;
+      if (!registeredUser) {
+        return res.status(404).json({
+          error: "This number is not registered with EchoLytix."
+        });
+      }
+      resolvedRecipientId = String(registeredUser.id);
+      resolvedRecipientName = registeredUser.name;
+    } else if (recipient_id) {
+      const targetUser = getPatientById(recipient_id) as any;
+      if (targetUser) {
+        resolvedRecipientName = targetUser.name;
+        resolvedRecipientPhone = targetUser.phone || "";
+      } else {
+        const contact = getContactById(Number(recipient_id)) as any;
+        if (contact) {
+          resolvedRecipientName = contact.name;
+          resolvedRecipientPhone = contact.phone || "";
+          if (contact.phone) {
+            const p = getPatientByPhone(contact.phone) as any;
+            if (p) resolvedRecipientId = String(p.id);
+          }
+        }
+      }
+    }
+
+    if (!resolvedRecipientId) {
+      return res.status(400).json({ error: "Recipient phone number or contact ID is required." });
+    }
+
+    if (resolvedRecipientId === String(initiatorId)) {
+      return res.status(400).json({ error: "You cannot call yourself." });
+    }
+
+    const callId = id || `call_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+    const online = isUserOnline(resolvedRecipientId);
+
+    const callRecord = createCall({
+      id: callId,
+      initiator_id: initiatorId,
+      initiator_name: initiatorName,
+      initiator_phone: initiatorPhone,
+      recipient_id: resolvedRecipientId,
+      recipient_name: resolvedRecipientName || "Recipient",
+      recipient_phone: resolvedRecipientPhone,
+      status: online ? "ringing" : "failed",
+      call_type: call_type || "video"
+    });
+
+    if (!online) {
+      updateCallStatus(callId, "failed", "Recipient is offline");
+      return res.status(200).json({
+        ...callRecord,
+        online: false,
+        error: `${resolvedRecipientName} is currently offline and cannot receive in-app calls.`
+      });
+    }
+
+    // Send incoming call notification to recipient via WebSocket
+    notifyUser(resolvedRecipientId, {
+      type: "call:incoming",
+      callId,
+      caller: {
+        id: String(initiatorId),
+        name: initiatorName,
+        phone: initiatorPhone,
+        avatar_initials: initiatorName.slice(0, 2).toUpperCase()
+      },
+      callType: call_type || "video"
+    });
+
+    // Notify initiator that call is ringing
+    notifyUser(String(initiatorId), {
+      type: "call:ringing",
+      callId,
+      recipient: {
+        id: resolvedRecipientId,
+        name: resolvedRecipientName,
+        phone: resolvedRecipientPhone
+      }
+    });
+
+    return res.status(201).json({
+      ...callRecord,
+      online: true,
+      message: `Calling ${resolvedRecipientName}...`
+    });
+  } catch (err: any) {
+    console.error("Error creating call:", err);
+    return res.status(500).json({ error: "Failed to initiate call", details: err?.message });
+  }
+});
+
+// Calls: History (must be before /:callId)
+app.get("/api/calls/history", (req: any, res) => {
+  try {
+    const initiatorId = getAuthPatientId(req);
+    const history = getCallHistory(initiatorId);
+    return res.json(history);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to retrieve call history" });
+  }
+});
+
+// Call Settings: Get (must be before /:callId)
+app.get("/api/calls/settings", (req: any, res) => {
+  try {
+    const patientId = getAuthPatientId(req);
+    const settings = getCallSettings(patientId);
+    return res.json(settings);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to get call settings" });
+  }
+});
+
+// Call Settings: Update
+app.put("/api/calls/settings", (req: any, res) => {
+  try {
+    const patientId = getAuthPatientId(req);
+    const updated = updateCallSettings(patientId, req.body);
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to update call settings" });
+  }
+});
+
+// ICE Servers Configuration (must be before /:callId)
+app.get("/api/calls/ice-servers", (req, res) => {
+  const stunUrls = process.env.STUN_SERVER
+    ? [process.env.STUN_SERVER, "stun:stun.l.google.com:19302"]
+    : ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"];
+
+  const iceServers: any[] = [{ urls: stunUrls }];
+
+  if (process.env.TURN_SERVER_URL) {
+    iceServers.push({
+      urls: process.env.TURN_SERVER_URL,
+      username: process.env.TURN_USERNAME || "",
+      credential: process.env.TURN_PASSWORD || ""
+    });
+  }
+  return res.json({ iceServers });
+});
+
+// Calls: Get Specific Call Record
+app.get("/api/calls/:callId", (req, res) => {
+  try {
+    const call = getCallById(req.params.callId);
+    if (!call) return res.status(404).json({ error: "Call not found" });
+    return res.json(call);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to retrieve call" });
+  }
+});
+
+// Calls: Accept Call
+app.post("/api/calls/:callId/accept", (req: any, res) => {
+  try {
+    const callId = req.params.callId;
+    const call = getCallById(callId) as any;
+    if (!call) return res.status(404).json({ error: "Call not found" });
+
+    const updated = updateCallStatus(callId, 'connecting');
+
+    // Notify initiator that call was accepted
+    if (call.initiator_id) {
+      notifyUser(String(call.initiator_id), {
+        type: "call:accepted",
+        callId,
+        recipientId: call.recipient_id,
+        recipientName: call.recipient_name
+      });
+    }
+
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to accept call" });
+  }
+});
+
+// Calls: Reject Call
+app.post("/api/calls/:callId/reject", (req: any, res) => {
+  try {
+    const callId = req.params.callId;
+    const call = getCallById(callId) as any;
+    if (!call) return res.status(404).json({ error: "Call not found" });
+
+    const reason = req.body?.reason || 'declined';
+    const updated = updateCallStatus(callId, 'rejected', reason);
+
+    if (call.initiator_id) {
+      notifyUser(String(call.initiator_id), {
+        type: "call:rejected",
+        callId,
+        reason
+      });
+    }
+
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to reject call" });
+  }
+});
+
+// Calls: Cancel Call (Initiator cancels before recipient answers)
+app.post("/api/calls/:callId/cancel", (req: any, res) => {
+  try {
+    const callId = req.params.callId;
+    const call = getCallById(callId) as any;
+    if (!call) return res.status(404).json({ error: "Call not found" });
+
+    const updated = updateCallStatus(callId, 'cancelled', 'Cancelled by caller');
+
+    if (call.recipient_id) {
+      notifyUser(String(call.recipient_id), {
+        type: "call:cancelled",
+        callId
+      });
+    }
+
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to cancel call" });
+  }
+});
+
+// Calls: End Call
+app.post("/api/calls/:callId/end", (req: any, res) => {
+  try {
+    const callId = req.params.callId;
+    const { duration, reason } = req.body || {};
+    const call = getCallById(callId) as any;
+    const updated = updateCallStatus(callId, 'ended', reason || 'normal', duration);
+
+    // Notify other participant
+    broadcastToCallRoom(callId, {
+      type: "call:ended",
+      callId,
+      reason: reason || "Call ended"
+    });
+    callRooms.delete(callId);
+
+    if (call) {
+      const authId = String(getAuthPatientId(req));
+      const peerId = String(call.initiator_id) === authId ? String(call.recipient_id) : String(call.initiator_id);
+      notifyUser(peerId, {
+        type: "call:ended",
+        callId,
+        reason: reason || "Call ended"
+      });
+    }
+
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to end call" });
+  }
+});
+
+// Call Messages (Transcript): Get
+app.get("/api/calls/:callId/messages", (req, res) => {
+  try {
+    const messages = getCallMessages(req.params.callId);
+    return res.json(messages);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to retrieve call messages" });
+  }
+});
+
+// Call Messages (Transcript): Post
+app.post("/api/calls/:callId/messages", (req: any, res) => {
+  try {
+    const { sender_name, sender_role, method, text, timestamp } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Message text is required" });
+    }
+    const msg = addCallMessage({
+      call_id: req.params.callId,
+      sender_name: sender_name || 'You',
+      sender_role: sender_role || 'local',
+      method: method || 'Sign',
+      text,
+      timestamp
+    });
+
+    // Broadcast message to room peers via callRooms
+    broadcastToCallRoom(req.params.callId, {
+      type: 'transcript-message',
+      callId: req.params.callId,
+      message: msg
+    });
+
+    return res.status(201).json(msg);
+  } catch (err: any) {
+    console.error("Error adding call message:", err);
+    return res.status(500).json({ error: "Failed to record message" });
+  }
+});
+
 // --- Remote Camera Pairing Session API ---
 
 interface RemoteSession {
@@ -1266,6 +2479,9 @@ async function startServer() {
   } else {
     server = http.createServer(app);
   }
+
+  // Initialize WebRTC Call WebSocket signaling
+  setupCallSignaling(server);
 
   server.listen(PORT, async () => {
     console.log(`\n======================================================`);

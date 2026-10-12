@@ -186,6 +186,107 @@ export function initDatabase() {
     );
   `);
 
+  // Accessible Video Call Contacts Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_id INTEGER,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      category TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      avatar_initials TEXT,
+      presence_status TEXT DEFAULT 'offline',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Video Calls Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS calls (
+      id TEXT PRIMARY KEY,
+      initiator_id INTEGER,
+      initiator_name TEXT NOT NULL,
+      recipient_id TEXT,
+      recipient_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'initiating',
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      answered_at DATETIME,
+      ended_at DATETIME,
+      duration INTEGER DEFAULT 0,
+      end_reason TEXT
+    );
+  `);
+  try {
+    db.exec('ALTER TABLE patients ADD COLUMN phone TEXT;');
+  } catch (e) {}
+  try {
+    db.exec('ALTER TABLE calls ADD COLUMN initiator_phone TEXT;');
+  } catch (e) {}
+  try {
+    db.exec('ALTER TABLE calls ADD COLUMN recipient_phone TEXT;');
+  } catch (e) {}
+  try {
+    db.exec("ALTER TABLE calls ADD COLUMN call_type TEXT DEFAULT 'video';");
+  } catch (e) {}
+  try {
+    db.exec('ALTER TABLE calls ADD COLUMN ringing_at DATETIME;');
+  } catch (e) {}
+
+  // Call Transcript Messages Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS call_messages (
+      id TEXT PRIMARY KEY,
+      call_id TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      sender_role TEXT NOT NULL DEFAULT 'user',
+      method TEXT NOT NULL,
+      text TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (call_id) REFERENCES calls(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Call Settings Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS call_settings (
+      patient_id INTEGER PRIMARY KEY,
+      auto_translate INTEGER DEFAULT 1,
+      show_detected_gestures INTEGER DEFAULT 1,
+      speak_translations INTEGER DEFAULT 1,
+      noise_reduction INTEGER DEFAULT 1,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Morse Settings Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS morse_settings (
+      patient_id INTEGER PRIMARY KEY,
+      trigger_key TEXT DEFAULT ' ',
+      trigger_code TEXT DEFAULT 'Space',
+      dot_dash_threshold INTEGER DEFAULT 250,
+      letter_gap_timeout INTEGER DEFAULT 1200,
+      input_mode TEXT DEFAULT 'tap',
+      auto_speak INTEGER DEFAULT 1,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Morse Translation History Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS morse_history (
+      id TEXT PRIMARY KEY,
+      patient_id INTEGER,
+      text TEXT NOT NULL,
+      morse_sequence TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   seedDefaultData();
 }
 
@@ -209,13 +310,50 @@ function seedDefaultData() {
       20,
       'XYZ',
       'Saksham',
-      '+91 639318xxxx',
+      '+91 8130896226',
       'Sachingupta@gmail.com',
       1.0,
       0.18,
       1800
     );
   }
+
+  // Ensure default patient has phone and seed secondary registered users for calling
+  try {
+    db.prepare(`UPDATE patients SET phone = '+919876543210' WHERE id = 1 AND (phone IS NULL OR phone = '');`).run();
+
+    const sakshamCheck = db.prepare('SELECT id FROM patients WHERE email = ? OR phone = ?').get('saksham@echolytix.care', '+918130896226');
+    if (!sakshamCheck) {
+      db.prepare(`
+        INSERT INTO patients (email, password, name, phone, caregiver_name, caregiver_phone, emergency_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'saksham@echolytix.care',
+        hashPassword('123456789'),
+        'Saksham',
+        '+918130896226',
+        'Sachin Gupta',
+        '+919876543210',
+        'saksham@echolytix.care'
+      );
+    }
+
+    const meeraCheck = db.prepare('SELECT id FROM patients WHERE email = ? OR phone = ?').get('dr.meera@aiims.edu', '+919811200000');
+    if (!meeraCheck) {
+      db.prepare(`
+        INSERT INTO patients (email, password, name, phone, caregiver_name, caregiver_phone, emergency_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'dr.meera@aiims.edu',
+        hashPassword('123456789'),
+        'Dr. Meera Sharma',
+        '+919811200000',
+        'Hospital AIIMS',
+        '+919811200000',
+        'dr.meera@aiims.edu'
+      );
+    }
+  } catch (e) {}
 
   // Seed Recent Phrases
   const phraseCountRow = db.prepare('SELECT COUNT(*) as count FROM recent_phrases').get() as { count: number | bigint };
@@ -271,9 +409,9 @@ function seedDefaultData() {
         category: 'Daily Comfort',
         phrases: [
           'Please adjust my pillow position.',
-          'Can you turn up the air conditioner?',
-          'Please dim the room lighting.',
-          'I would like to rest now.'
+          'I am tired.',
+          'I want to rest.',
+          'I need to use the bathroom.'
         ]
       },
       {
@@ -306,6 +444,59 @@ function seedDefaultData() {
     insertSetting.run('tts_pitch', '1.0');
     insertSetting.run('theme', 'dark');
     insertSetting.run('ai_expanded_phrases', 'enabled');
+  }
+
+  // Seed Default Contacts for Accessible Video Call
+  const contactCountRow = db.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number | bigint };
+  const contactCount = Number(contactCountRow?.count || 0);
+  if (contactCount === 0) {
+    const insertContact = db.prepare(`
+      INSERT INTO contacts (patient_id, name, role, category, phone, email, avatar_initials, presence_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertContact.run(1, 'Saksham', 'Primary Caretaker', 'caregivers', '+91 8130896226', 'saksham@echolytix.care', 'CG', 'online');
+    insertContact.run(1, 'Dr. Meera Sharma', 'Neurologist', 'healthcare', '+91 9811200000', 'dr.meera@aiims.edu', 'DS', 'online');
+    insertContact.run(1, 'Parent', 'Family Member', 'family', '+91 9811000000', 'parent@family.care', 'PA', 'offline');
+    insertContact.run(1, 'Emergency Helpline', 'Medical Support', 'emergency', '112', 'emergency@echolytix.org', 'EH', '24/7');
+  }
+
+  // Seed Sample Call & Messages for initial transcript
+  const callCountRow = db.prepare('SELECT COUNT(*) as count FROM calls').get() as { count: number | bigint };
+  if (Number(callCountRow?.count || 0) === 0) {
+    const defaultCallId = 'call_demo_default';
+    db.prepare(`
+      INSERT INTO calls (id, initiator_id, initiator_name, recipient_id, recipient_name, status, duration)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(defaultCallId, 1, 'Arjun Pratap', '1', 'Saksham', 'connected', 754);
+
+    const insertMsg = db.prepare(`
+      INSERT INTO call_messages (id, call_id, sender_name, sender_role, method, text, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertMsg.run('m1', defaultCallId, 'You', 'local', 'Sign', 'GOOD', '10:24 AM');
+    insertMsg.run('m2', defaultCallId, 'Saksham', 'remote', 'Speech', "That's great! How are you feeling now?", '10:24 AM');
+    insertMsg.run('m3', defaultCallId, 'You', 'local', 'Blink', 'I NEED WATER', '10:25 AM');
+    insertMsg.run('m4', defaultCallId, 'Saksham', 'remote', 'Speech', 'Okay, I will get you some water.', '10:25 AM');
+  }
+
+  // Seed Default Morse Settings
+  const morseSettingsCount = db.prepare('SELECT COUNT(*) as count FROM morse_settings').get() as { count: number | bigint };
+  if (Number(morseSettingsCount?.count || 0) === 0) {
+    db.prepare(`
+      INSERT INTO morse_settings (patient_id, trigger_key, trigger_code, dot_dash_threshold, letter_gap_timeout, input_mode, auto_speak)
+      VALUES (1, ' ', 'Space', 250, 1200, 'tap', 1)
+    `).run();
+  }
+
+  // Seed Sample Morse History
+  const morseHistoryCount = db.prepare('SELECT COUNT(*) as count FROM morse_history').get() as { count: number | bigint };
+  if (Number(morseHistoryCount?.count || 0) === 0) {
+    const insertMorseHist = db.prepare(`
+      INSERT INTO morse_history (id, patient_id, text, morse_sequence)
+      VALUES (?, ?, ?, ?)
+    `);
+    insertMorseHist.run('mh1', 1, 'YES', '— · — —   ·   · · ·');
+    insertMorseHist.run('mh2', 1, 'WATER', '· — —   · —   —   ·   · — ·');
   }
 }
 
@@ -407,6 +598,34 @@ export function addPhraseToCategory(categoryId: number, phrase: string) {
   const stmt = db.prepare('INSERT INTO category_phrases (category_id, text) VALUES (?, ?)');
   stmt.run(categoryId, phrase);
   return { categoryId, phrase };
+}
+
+export function deleteCategory(id: number) {
+  db.prepare('DELETE FROM category_phrases WHERE category_id = ?').run(id);
+  return db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+}
+
+export function deletePhraseFromCategory(categoryId: number, phrase: string) {
+  return db.prepare('DELETE FROM category_phrases WHERE category_id = ? AND text = ?').run(categoryId, phrase);
+}
+
+// TTS Preferences Helpers
+export function getTtsPreferences(patientId = 1) {
+  const voice = db.prepare("SELECT value FROM user_settings WHERE key = 'tts_voice'").get() as any;
+  const rate = db.prepare("SELECT value FROM user_settings WHERE key = 'tts_rate'").get() as any;
+  const pitch = db.prepare("SELECT value FROM user_settings WHERE key = 'tts_pitch'").get() as any;
+  return {
+    voice: voice?.value || '',
+    rate: rate?.value ? parseFloat(rate.value) : 1.0,
+    pitch: pitch?.value ? parseFloat(pitch.value) : 1.0,
+  };
+}
+
+export function updateTtsPreferences(patientId = 1, prefs: { voice?: string; rate?: number; pitch?: number }) {
+  if (prefs.voice !== undefined) updateSetting('tts_voice', prefs.voice);
+  if (prefs.rate !== undefined) updateSetting('tts_rate', String(prefs.rate));
+  if (prefs.pitch !== undefined) updateSetting('tts_pitch', String(prefs.pitch));
+  return getTtsPreferences(patientId);
 }
 
 // Settings
@@ -605,7 +824,7 @@ export function createSession(patientId: number, token: string, expiresAt: strin
 
 export function getSession(token: string) {
   const stmt = db.prepare(`
-    SELECT s.token, s.expires_at, p.id, p.email, p.name, p.age, p.medical_id, 
+    SELECT s.token, s.expires_at, p.id, p.email, p.name, p.age, p.medical_id, p.phone,
            p.caregiver_name, p.caregiver_phone, p.emergency_email, 
            p.tts_speed, p.blink_threshold, p.commit_delay
     FROM sessions s
@@ -613,6 +832,28 @@ export function getSession(token: string) {
     WHERE s.token = ?
   `);
   return stmt.get(token);
+}
+
+export function getPatientById(id: number | string) {
+  const stmt = db.prepare('SELECT id, email, name, phone, age, medical_id, caregiver_name, caregiver_phone, emergency_email FROM patients WHERE id = ?');
+  return stmt.get(Number(id));
+}
+
+export function getPatientByPhone(phone: string) {
+  if (!phone) return null;
+  const cleanDigits = phone.replace(/\D/g, '');
+  const last10 = cleanDigits.slice(-10);
+
+  const stmt = db.prepare(`
+    SELECT id, email, name, phone, age, medical_id, caregiver_name, caregiver_phone
+    FROM patients 
+    WHERE phone = ? 
+       OR phone = ? 
+       OR (phone IS NOT NULL AND LENGTH(REPLACE(REPLACE(phone, ' ', ''), '-', '')) >= 10 AND REPLACE(REPLACE(phone, ' ', ''), '-', '') LIKE '%' || ?)
+       OR (caregiver_phone IS NOT NULL AND REPLACE(REPLACE(caregiver_phone, ' ', ''), '-', '') LIKE '%' || ?)
+    LIMIT 1
+  `);
+  return stmt.get(phone, `+${cleanDigits}`, last10, last10);
 }
 
 export function deleteSession(token: string) {
@@ -664,6 +905,307 @@ export function getSupportRequests(limit = 50) {
     LIMIT ?
   `);
   return stmt.all(limit);
+}
+
+// Contacts Helpers
+export function getContacts(patientId?: number, search?: string, category?: string) {
+  let query = 'SELECT * FROM contacts WHERE 1=1';
+  const params: any[] = [];
+  if (patientId) {
+    query += ' AND (patient_id = ? OR patient_id IS NULL)';
+    params.push(patientId);
+  }
+  if (category && category !== 'all') {
+    query += ' AND LOWER(category) = LOWER(?)';
+    params.push(category);
+  }
+  if (search && search.trim()) {
+    query += ' AND (LOWER(name) LIKE ? OR LOWER(role) LIKE ?)';
+    const term = `%${search.trim().toLowerCase()}%`;
+    params.push(term, term);
+  }
+  query += ' ORDER BY id ASC';
+  return db.prepare(query).all(...params);
+}
+
+export function getContactById(contactId: number) {
+  return db.prepare('SELECT * FROM contacts WHERE id = ?').get(contactId);
+}
+
+export function createContact(data: {
+  patient_id?: number;
+  name: string;
+  role: string;
+  category: string;
+  phone?: string;
+  email?: string;
+  avatar_initials?: string;
+  presence_status?: string;
+}) {
+  const initials = data.avatar_initials || data.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() || 'CT';
+  const stmt = db.prepare(`
+    INSERT INTO contacts (patient_id, name, role, category, phone, email, avatar_initials, presence_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const info = stmt.run(
+    data.patient_id ?? 1,
+    data.name,
+    data.role,
+    data.category.toLowerCase(),
+    data.phone || null,
+    data.email || null,
+    initials,
+    data.presence_status || 'offline'
+  );
+  return getContactById(Number(info.lastInsertRowid));
+}
+
+export function deleteContact(contactId: number, patientId?: number) {
+  if (patientId) {
+    return db.prepare('DELETE FROM contacts WHERE id = ? AND (patient_id = ? OR patient_id IS NULL)').run(contactId, patientId);
+  }
+  return db.prepare('DELETE FROM contacts WHERE id = ?').run(contactId);
+}
+
+export function updateContactPresence(contactId: number, presence: string) {
+  return db.prepare('UPDATE contacts SET presence_status = ? WHERE id = ?').run(presence, contactId);
+}
+
+export function updateContact(contactId: number, data: { phone?: string; name?: string; role?: string; email?: string }) {
+  const current = getContactById(contactId) as any;
+  if (!current) return null;
+  const newPhone = data.phone !== undefined ? data.phone : current.phone;
+  const newName = data.name !== undefined ? data.name : current.name;
+  const newRole = data.role !== undefined ? data.role : current.role;
+  const newEmail = data.email !== undefined ? data.email : current.email;
+
+  const stmt = db.prepare(`
+    UPDATE contacts
+    SET phone = ?, name = ?, role = ?, email = ?
+    WHERE id = ?
+  `);
+  stmt.run(newPhone, newName, newRole, newEmail, Number(contactId));
+  return getContactById(contactId);
+}
+
+export function dismissSosAlert(alertId?: number) {
+  if (alertId) {
+    const update = db.prepare(`UPDATE sos_alerts SET status = 'DISMISSED' WHERE id = ?`);
+    update.run(Number(alertId));
+  } else {
+    const update = db.prepare(`UPDATE sos_alerts SET status = 'DISMISSED' WHERE status = 'ACTIVE'`);
+    update.run();
+  }
+  return { success: true };
+}
+
+// Calls Helpers
+export function createCall(data: {
+  id: string;
+  initiator_id?: number;
+  initiator_name: string;
+  initiator_phone?: string;
+  recipient_id?: string;
+  recipient_name: string;
+  recipient_phone?: string;
+  status?: string;
+  call_type?: string;
+}) {
+  const stmt = db.prepare(`
+    INSERT INTO calls (
+      id, initiator_id, initiator_name, initiator_phone, 
+      recipient_id, recipient_name, recipient_phone, 
+      status, call_type, started_at, ringing_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+  stmt.run(
+    data.id,
+    data.initiator_id ?? 1,
+    data.initiator_name,
+    data.initiator_phone || null,
+    data.recipient_id || null,
+    data.recipient_name,
+    data.recipient_phone || null,
+    data.status || 'initiating',
+    data.call_type || 'video'
+  );
+  return getCallById(data.id);
+}
+
+export function getCallById(callId: string) {
+  return db.prepare('SELECT * FROM calls WHERE id = ?').get(callId);
+}
+
+export function updateCallStatus(callId: string, status: string, endReason?: string, duration?: number) {
+  let query = 'UPDATE calls SET status = ?';
+  const params: any[] = [status];
+  if (status === 'connected') {
+    query += ', answered_at = COALESCE(answered_at, CURRENT_TIMESTAMP)';
+  } else if (status === 'ended' || status === 'failed' || status === 'rejected' || status === 'cancelled') {
+    query += ', ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP)';
+    if (endReason) {
+      query += ', end_reason = ?';
+      params.push(endReason);
+    }
+    if (duration !== undefined) {
+      query += ', duration = ?';
+      params.push(duration);
+    }
+  }
+  query += ' WHERE id = ?';
+  params.push(callId);
+  db.prepare(query).run(...params);
+  return getCallById(callId);
+}
+
+export function getCallHistory(userId?: number, limit = 30) {
+  if (userId) {
+    return db.prepare(`
+      SELECT * FROM calls 
+      WHERE initiator_id = ? OR recipient_id = ? 
+      ORDER BY started_at DESC 
+      LIMIT ?
+    `).all(userId, String(userId), limit);
+  }
+  return db.prepare('SELECT * FROM calls ORDER BY started_at DESC LIMIT ?').all(limit);
+}
+
+// Call Messages Helpers
+export function addCallMessage(data: {
+  id?: string;
+  call_id: string;
+  sender_name: string;
+  sender_role: string;
+  method: string;
+  text: string;
+  timestamp?: string;
+}) {
+  const id = data.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const time = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const stmt = db.prepare(`
+    INSERT INTO call_messages (id, call_id, sender_name, sender_role, method, text, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(id, data.call_id, data.sender_name, data.sender_role, data.method, data.text, time);
+  return { id, ...data, timestamp: time };
+}
+
+export function getCallMessages(callId: string) {
+  return db.prepare('SELECT * FROM call_messages WHERE call_id = ? ORDER BY created_at ASC').all(callId);
+}
+
+// Call Settings Helpers
+export function getCallSettings(patientId = 1) {
+  let row = db.prepare('SELECT * FROM call_settings WHERE patient_id = ?').get(patientId) as any;
+  if (!row) {
+    db.prepare(`
+      INSERT INTO call_settings (patient_id, auto_translate, show_detected_gestures, speak_translations, noise_reduction)
+      VALUES (?, 1, 1, 1, 1)
+    `).run(patientId);
+    row = db.prepare('SELECT * FROM call_settings WHERE patient_id = ?').get(patientId);
+  }
+  return {
+    auto_translate: Boolean(row.auto_translate),
+    show_detected_gestures: Boolean(row.show_detected_gestures),
+    speak_translations: Boolean(row.speak_translations),
+    noise_reduction: Boolean(row.noise_reduction),
+  };
+}
+
+export function updateCallSettings(patientId = 1, settings: {
+  auto_translate?: boolean;
+  show_detected_gestures?: boolean;
+  speak_translations?: boolean;
+  noise_reduction?: boolean;
+}) {
+  const current = getCallSettings(patientId);
+  const updated = { ...current, ...settings };
+  db.prepare(`
+    INSERT INTO call_settings (patient_id, auto_translate, show_detected_gestures, speak_translations, noise_reduction, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(patient_id) DO UPDATE SET
+      auto_translate = excluded.auto_translate,
+      show_detected_gestures = excluded.show_detected_gestures,
+      speak_translations = excluded.speak_translations,
+      noise_reduction = excluded.noise_reduction,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    patientId,
+    updated.auto_translate ? 1 : 0,
+    updated.show_detected_gestures ? 1 : 0,
+    updated.speak_translations ? 1 : 0,
+    updated.noise_reduction ? 1 : 0
+  );
+  return updated;
+}
+
+// Morse Settings Helpers
+export function getMorseSettings(patientId = 1) {
+  let row = db.prepare('SELECT * FROM morse_settings WHERE patient_id = ?').get(patientId) as any;
+  if (!row) {
+    db.prepare(`
+      INSERT INTO morse_settings (patient_id, trigger_key, trigger_code, dot_dash_threshold, letter_gap_timeout, input_mode, auto_speak)
+      VALUES (?, ' ', 'Space', 250, 1200, 'tap', 1)
+    `).run(patientId);
+    row = db.prepare('SELECT * FROM morse_settings WHERE patient_id = ?').get(patientId);
+  }
+  return {
+    trigger_key: row.trigger_key || ' ',
+    trigger_code: row.trigger_code || 'Space',
+    dot_dash_threshold: Number(row.dot_dash_threshold || 250),
+    letter_gap_timeout: Number(row.letter_gap_timeout || 1200),
+    input_mode: row.input_mode || 'tap',
+    auto_speak: Boolean(row.auto_speak)
+  };
+}
+
+export function updateMorseSettings(patientId = 1, settings: {
+  trigger_key?: string;
+  trigger_code?: string;
+  dot_dash_threshold?: number;
+  letter_gap_timeout?: number;
+  input_mode?: string;
+  auto_speak?: boolean;
+}) {
+  const current = getMorseSettings(patientId);
+  const updated = { ...current, ...settings };
+  db.prepare(`
+    INSERT INTO morse_settings (patient_id, trigger_key, trigger_code, dot_dash_threshold, letter_gap_timeout, input_mode, auto_speak, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(patient_id) DO UPDATE SET
+      trigger_key = excluded.trigger_key,
+      trigger_code = excluded.trigger_code,
+      dot_dash_threshold = excluded.dot_dash_threshold,
+      letter_gap_timeout = excluded.letter_gap_timeout,
+      input_mode = excluded.input_mode,
+      auto_speak = excluded.auto_speak,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    patientId,
+    updated.trigger_key,
+    updated.trigger_code,
+    updated.dot_dash_threshold,
+    updated.letter_gap_timeout,
+    updated.input_mode,
+    updated.auto_speak ? 1 : 0
+  );
+  return updated;
+}
+
+// Morse History Helpers
+export function getMorseHistory(patientId = 1, limit = 50) {
+  return db.prepare('SELECT * FROM morse_history WHERE patient_id = ? ORDER BY created_at DESC LIMIT ?').all(patientId, limit);
+}
+
+export function addMorseHistory(data: { patient_id?: number; text: string; morse_sequence?: string }) {
+  const id = `mh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const patientId = data.patient_id || 1;
+  db.prepare(`
+    INSERT INTO morse_history (id, patient_id, text, morse_sequence)
+    VALUES (?, ?, ?, ?)
+  `).run(id, patientId, data.text, data.morse_sequence || null);
+  return { id, patient_id: patientId, text: data.text, morse_sequence: data.morse_sequence };
 }
 
 export { db };
