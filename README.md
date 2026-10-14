@@ -2,7 +2,7 @@
 
 > *"No voice should go unheard."*
 
-[![CI](https://github.com/sachinguptaa056-gif/echolytix/actions/workflows/ci.yml/badge.svg)](https://github.com/sachinguptaa056-gif/echolytix/actions)
+[![CI](https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix/actions/workflows/ci.yml/badge.svg)](https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix/actions)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-646cff.svg)](https://vitejs.dev/)
@@ -12,7 +12,7 @@
 
 It translates **eye blinks (Morse code)**, **hand sign gestures**, **manual Morse taps**, and **wireless smartphone camera inputs** into audible speech and text in real time — using fully on-device computer vision (MediaPipe) and lightweight neural classifiers.
 
-Repository: **[https://github.com/sachinguptaa056-gif/echolytix](https://github.com/sachinguptaa056-gif/echolytix)**
+Repository: **[https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix](https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix)**
 
 ---
 
@@ -72,8 +72,8 @@ Repository: **[https://github.com/sachinguptaa056-gif/echolytix](https://github.
 
 ```bash
 # Clone the repository
-git clone https://github.com/sachinguptaa056-gif/echolytix.git
-cd echolytix
+git clone https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix.git
+cd Miniproject-Echolytix
 
 # Install dependencies
 npm install

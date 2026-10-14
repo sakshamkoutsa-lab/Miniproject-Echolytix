@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { NavTab, RecentPhrase } from './types';
 import { INITIAL_RECENT_PHRASES } from './data';
 import { Header } from './components/Header';
@@ -13,11 +13,35 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthPortal } from './components/AuthPortal';
 import { RemoteReceiver } from './components/RemoteReceiver';
 import { RemoteSender } from './components/RemoteSender';
+import { VideoCall } from './components/VideoCall';
+import { EmergencySos } from './components/EmergencySos';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [recentPhrases, setRecentPhrases] = useState<RecentPhrase[]>(INITIAL_RECENT_PHRASES);
   const [isSosOpen, setIsSosOpen] = useState<boolean>(false);
+  const [sosTriggerSource, setSosTriggerSource] = useState<'manual' | 'blink' | 'morse' | 'remote' | 'sign'>('manual');
+
+  const handleOpenSos = useCallback((source: 'manual' | 'blink' | 'morse' | 'remote' | 'sign' = 'manual') => {
+    setSosTriggerSource(source);
+    setCurrentTab('sos');
+  }, []);
+
+  const handleOpenSosFromBlink = useCallback(() => {
+    handleOpenSos('blink');
+  }, [handleOpenSos]);
+
+  const handleOpenSosFromSign = useCallback(() => {
+    handleOpenSos('sign');
+  }, [handleOpenSos]);
+
+  const handleOpenSosFromMorse = useCallback(() => {
+    handleOpenSos('morse');
+  }, [handleOpenSos]);
+
+  const handleOpenSosFromRemote = useCallback(() => {
+    handleOpenSos('remote');
+  }, [handleOpenSos]);
 
   // Global Auth State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -210,18 +234,22 @@ export default function App() {
     );
   }
 
+  // The redesigned Dashboard, Blink, Hand Sign, Video Call, Morse Code, TTS, and SOS pages render their own unified sidebar + top bar,
+  // so the legacy global header / mobile bottom bar are only shown on the remaining views.
+  const isModernShell = isLoggedIn && (currentTab === 'dashboard' || currentTab === 'blink' || currentTab === 'sign' || currentTab === 'remote' || currentTab === 'morse' || currentTab === 'tts' || currentTab === 'sos');
+
   return (
     <div className="min-h-screen bg-[#F3EDDF] text-slate-900 font-body flex flex-col antialiased selection:bg-indigo-600 selection:text-white">
       {/* Top AppBar Header */}
-      <Header
-        currentTab={currentTab}
-        onSelectTab={setCurrentTab}
-        onOpenSos={() => {
-          setIsSosOpen(true);
-        }}
-        isLoggedIn={isLoggedIn}
-        patientName={patient?.name}
-      />
+      {!isModernShell && (
+        <Header
+          currentTab={currentTab}
+          onSelectTab={setCurrentTab}
+          onOpenSos={() => handleOpenSos('manual')}
+          isLoggedIn={isLoggedIn}
+          patientName={patient?.name}
+        />
+      )}
 
       {/* Main View Port */}
       <div className="flex-1 flex flex-col">
@@ -238,29 +266,78 @@ export default function App() {
                   sessionToken={sessionToken}
                   onLogout={handleLogout}
                   onProfileUpdate={handleProfileUpdate}
+                  onOpenSos={() => handleOpenSos('manual')}
                 />
               )}
 
               {currentTab === 'blink' && (
-                <BlinkToText onAddPhraseHistory={handleAddPhraseHistory} />
+                <BlinkToText
+                  onAddPhraseHistory={handleAddPhraseHistory}
+                  onOpenSos={handleOpenSosFromBlink}
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                />
               )}
 
               {currentTab === 'sign' && (
-                <SignLanguage onAddPhraseHistory={handleAddPhraseHistory} />
+                <SignLanguage
+                  onAddPhraseHistory={handleAddPhraseHistory}
+                  onOpenSos={handleOpenSosFromSign}
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                />
               )}
 
               {currentTab === 'morse' && (
-                <MorseTranslator onAddPhraseHistory={handleAddPhraseHistory} />
+                <MorseTranslator
+                  onAddPhraseHistory={handleAddPhraseHistory}
+                  onOpenSos={handleOpenSosFromMorse}
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                />
               )}
 
               {currentTab === 'tts' && (
-                <TextToSpeech onAddPhraseHistory={handleAddPhraseHistory} />
+                <TextToSpeech
+                  onAddPhraseHistory={handleAddPhraseHistory}
+                  onOpenSos={() => handleOpenSos('manual')}
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                />
               )}
 
               {currentTab === 'remote' && (
-                <RemoteReceiver
+                <VideoCall
                   onAddPhraseHistory={handleAddPhraseHistory}
-                  onOpenSos={() => setIsSosOpen(true)}
+                  onOpenSos={handleOpenSosFromRemote}
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                />
+              )}
+
+              {currentTab === 'sos' && (
+                <EmergencySos
+                  onSelectTab={setCurrentTab}
+                  patient={patient}
+                  sessionToken={sessionToken}
+                  onLogout={handleLogout}
+                  onProfileUpdate={handleProfileUpdate}
+                  recentPhrases={recentPhrases}
                 />
               )}
             </>
@@ -269,15 +346,21 @@ export default function App() {
       </div>
 
       {/* Floating Bottom Navigation Bar (Mobile View) */}
-      <BottomNavBar 
-        currentTab={currentTab} 
-        onSelectTab={setCurrentTab} 
-        isLoggedIn={isLoggedIn}
-      />
+      {!isModernShell && (
+        <BottomNavBar 
+          currentTab={currentTab} 
+          onSelectTab={setCurrentTab} 
+          isLoggedIn={isLoggedIn}
+        />
+      )}
 
       {/* Emergency SOS Modal */}
       {isLoggedIn && (
-        <SosModal isOpen={isSosOpen} onClose={() => setIsSosOpen(false)} />
+        <SosModal
+          isOpen={isSosOpen}
+          onClose={() => setIsSosOpen(false)}
+          triggerSource={sosTriggerSource}
+        />
       )}
     </div>
   );

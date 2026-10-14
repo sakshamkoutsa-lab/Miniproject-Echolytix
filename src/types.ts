@@ -1,4 +1,4 @@
-export type NavTab = 'dashboard' | 'blink' | 'sign' | 'morse' | 'tts' | 'remote';
+export type NavTab = 'dashboard' | 'blink' | 'sign' | 'morse' | 'tts' | 'remote' | 'sos';
 
 export interface RecentPhrase {
   id: string;

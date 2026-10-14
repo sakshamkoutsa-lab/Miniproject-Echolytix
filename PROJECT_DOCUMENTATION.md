@@ -1,7 +1,7 @@
 # EcholytiX — Comprehensive System Documentation & Technical Blueprint
 
 > **"No voice should go unheard."**  
-> **Official Repository:** [https://github.com/sachinguptaa056-gif/echolytix](https://github.com/sachinguptaa056-gif/echolytix)  
+> **Official Repository:** [https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix](https://github.com/sakshamkoutsa-lab/Miniproject-Echolytix)  
 > **Version:** 1.0.0  
 > **Runtime Environment:** Node.js (>= 22.5.0), React 19, TypeScript 5.8, Express 4, SQLite  
 

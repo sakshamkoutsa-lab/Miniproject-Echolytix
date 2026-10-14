@@ -344,6 +344,7 @@ export const RemoteSender: React.FC<RemoteSenderProps> = ({ code, onDisconnect }
           <BlinkToText 
             onAddPhraseHistory={handleDummyAddPhrase} 
             remoteCode={code} 
+            onOpenSos={triggerEmergencySos}
           />
         )}
 
